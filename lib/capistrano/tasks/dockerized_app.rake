@@ -23,7 +23,21 @@ namespace :dockerized_app do
   # Setup Tasks
 
   desc 'Setup'
-  task setup: [:setup_init, :setup_cron, :setup_logrotate, :setup_symlinks]
+  task setup: [:setup_init, :setup_log, :setup_cron, :setup_symlinks]
+
+
+  desc 'Setup cron'
+  task :setup_cron do
+    crontab = fetch(:dockerized_app_crontab)
+    on roles(:all) do
+      upload_file(crontab, "/etc/cron.d/#{fetch(:application)}")
+    end if crontab
+
+    crontab_primary = fetch(:dockerized_app_crontab_primary)
+    on roles(:all, filter: :primary) do
+      upload_file(crontab_primary, "/etc/cron.d/#{fetch(:application)}-primary")
+    end if crontab_primary
+  end
 
 
   desc 'Setup init'
@@ -72,22 +86,8 @@ eos
   end
 
 
-  desc 'Setup cron'
-  task :setup_cron do
-    crontab = fetch(:dockerized_app_crontab)
-    on roles(:all) do
-      upload_file(crontab, "/etc/cron.d/#{fetch(:application)}")
-    end if crontab
-
-    crontab_primary = fetch(:dockerized_app_crontab_primary)
-    on roles(:all, filter: :primary) do
-      upload_file(crontab_primary, "/etc/cron.d/#{fetch(:application)}-primary")
-    end if crontab_primary
-  end
-
-
-  desc 'Setup logrotate'
-  task :setup_logrotate do
+  desc 'Setup log'
+  task :setup_log do
     logrotate_script = <<-eos
 #{shared_path}/log/*.log {
   daily
@@ -101,7 +101,11 @@ eos
 }
 eos
 
-    on roles(:all) do
+    on roles(:all) do |host|
+      sudo :mkdir, '-p', "#{shared_path}/log"
+      sudo :chown, '-R', "#{host.user}:$(id -gn #{host.user})", fetch(:deploy_to)
+      execute :chmod, '-R', 'u+rw,g+rws,o+r', fetch(:deploy_to)
+      execute :chmod, 'o+w', "#{shared_path}/log"
       upload_file(StringIO.new(logrotate_script), "/etc/logrotate.d/#{fetch(:application)}")
     end
   end
