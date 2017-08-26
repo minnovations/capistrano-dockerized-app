@@ -139,9 +139,18 @@ eos
   # Deploy Tasks
 
   desc 'deploy'
-  task deploy: [:setup_compose, :build, :stop, :migrate, :start, :cleanup]
+  task deploy: [:check_setup, :setup_compose, :build, :stop, :migrate, :start, :cleanup]
 
   after 'deploy:publishing', 'dockerized_app:deploy'
+
+
+  task :check_setup do
+    on roles(:all) do
+      if test "[ ! -f /etc/init.d/#{fetch(:application)} ] || [ ! -f /etc/logrotate.d/#{fetch(:application)} ]"
+        invoke 'dockerized_app:setup'
+      end
+    end
+  end
 
 
   task :setup_compose do
