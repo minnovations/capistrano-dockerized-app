@@ -28,10 +28,9 @@ namespace :dockerized_app do
 
 
 
-  # Initial Setup & Uninstall Tasks
+  # Initial Setup Tasks
 
-  desc 'Setup dockerized app'
-  task setup: [:setup_init, :setup_log, :setup_cron, :setup_symlinks]
+  task setup_initial: [:setup_init, :setup_log, :setup_cron, :setup_symlinks]
 
 
   task :setup_cron do
@@ -119,35 +118,20 @@ eos
   end
 
 
-  desc 'Uninstall dockerized app'
-  task :uninstall do
-    on roles(:all) do
-      if test "[ -L #{current_path} ] && [ -d $(readlink #{current_path}) ]"
-        invoke 'dockerized_app:stop'
-        invoke 'dockerized_app:cleanup'
-      end
-
-      sudo :rm, '-f', "/etc/init.d/#{fetch(:application)}", "/etc/logrotate.d/#{fetch(:application)}", "/etc/cron.d/{#{fetch(:application)},#{fetch(:application)}-primary}"
-      execute :rm, '-f', "~/#{fetch(:application)}"
-      execute :rm, '-fr', fetch(:deploy_to)
-    end
-  end
-
-
 
 
   # Deploy Tasks
 
-  desc 'deploy'
-  task deploy: [:check_setup, :setup_compose, :build, :stop, :migrate, :start, :cleanup]
+  desc 'Deploy dockerized app'
+  task deploy: [:check_setup_initial, :setup_compose, :setup_secrets, :build, :stop, :migrate, :start, :cleanup]
 
   after 'deploy:publishing', 'dockerized_app:deploy'
 
 
-  task :check_setup do
+  task :check_setup_initial do
     on roles(:all) do
       if test "[ ! -f /etc/init.d/#{fetch(:application)} ] || [ ! -f /etc/logrotate.d/#{fetch(:application)} ]"
-        invoke 'dockerized_app:setup'
+        invoke 'dockerized_app:setup_initial'
       end
     end
   end
@@ -161,6 +145,17 @@ eos
 
     on roles(:all) do |host|
       upload_file(StringIO.new(compose_env_file), "#{current_path}/.env", mod: 'ug+rw,o+r', own: host.user)
+    end
+  end
+
+
+  task :setup_secrets do
+    on roles(:all) do
+      if test "[ -f #{current_path}/.env.d/.env.secrets.asc ]"
+        within current_path do
+          execute :cp, '.env.d/.env.secrets.asc', '.env.d/.env.secrets'
+        end
+      end
     end
   end
 
@@ -226,6 +221,25 @@ eos
       execute :bash, '-c', '"for CONTAINER in \$(docker ps -f status=exited -q) ; do docker rm \${CONTAINER} ; done"'
       execute :bash, '-c', '"for IMAGE in \$(docker images -f dangling=true -q) ; do docker rmi \${IMAGE} ; done"'
       execute :docker, 'network', 'prune', '-f'
+    end
+  end
+
+
+
+
+  # Uninstall Task
+
+  desc 'Uninstall dockerized app'
+  task :uninstall do
+    on roles(:all) do
+      if test "[ -L #{current_path} ] && [ -d $(readlink #{current_path}) ]"
+        invoke 'dockerized_app:stop'
+        invoke 'dockerized_app:cleanup'
+      end
+
+      sudo :rm, '-f', "/etc/init.d/#{fetch(:application)}", "/etc/logrotate.d/#{fetch(:application)}", "/etc/cron.d/{#{fetch(:application)},#{fetch(:application)}-primary}"
+      execute :rm, '-f', "~/#{fetch(:application)}"
+      execute :rm, '-fr', fetch(:deploy_to)
     end
   end
 
