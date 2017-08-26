@@ -9,18 +9,26 @@ namespace :dockerized_app do
 
   def upload_file(file, dest_path, options={})
     mod = options[:mod] || 'u+rw,go+r'
+    own = options[:own]
     tmp_file = "#{fetch(:tmp_dir)}/#{Array.new(8) { [*'0'..'9'].sample }.join}"
 
     upload! file, tmp_file
     sudo :cp, '-f', tmp_file, dest_path
     sudo :chmod, mod, dest_path
+    if own
+      if own.include?(':')
+        sudo :chown, own, dest_path
+      else
+        sudo :chown, "#{own}:$(id -gn #{own})", dest_path
+      end
+    end
     execute :rm, tmp_file
   end
 
 
 
 
-  # Setup Tasks
+  # Setup Tasks (one-time)
 
   desc 'Setup'
   task setup: [:setup_init, :setup_log, :setup_cron, :setup_symlinks]
@@ -28,15 +36,13 @@ namespace :dockerized_app do
 
   desc 'Setup cron'
   task :setup_cron do
-    crontab = fetch(:dockerized_app_crontab)
     on roles(:all) do
-      upload_file(crontab, "/etc/cron.d/#{fetch(:application)}")
-    end if crontab
+      upload_file('config/crontab', "/etc/cron.d/#{fetch(:application)}")
+    end if File.exists?('config/crontab')
 
-    crontab_primary = fetch(:dockerized_app_crontab_primary)
     on roles(:all, filter: :primary) do
-      upload_file(crontab_primary, "/etc/cron.d/#{fetch(:application)}-primary")
-    end if crontab_primary
+      upload_file('config/crontab-primary', "/etc/cron.d/#{fetch(:application)}-primary")
+    end if File.exists?('config/crontab-primary')
   end
 
 
@@ -57,17 +63,15 @@ namespace :dockerized_app do
 
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-DOCKER_COMPOSE_OPTS="#{docker_compose_opts.join(' ')}"
-
 
 case ${1} in
   start)
     cd #{current_path}
-    docker-compose ${DOCKER_COMPOSE_OPTS} up -d
+    docker-compose up -d
     ;;
   stop)
     cd #{current_path}
-    docker-compose ${DOCKER_COMPOSE_OPTS} down
+    docker-compose down
     ;;
   restart)
     ${0} stop
@@ -124,16 +128,29 @@ eos
   # Deploy Tasks
 
   desc 'deploy'
-  task deploy: [:build, :stop, :migrate, :start, :cleanup]
+  task deploy: [:setup_compose, :build, :stop, :migrate, :start, :cleanup]
 
   after 'deploy:publishing', 'dockerized_app:deploy'
+
+
+  desc 'Setup Compose'
+  task :setup_compose do
+    compose_env_file = <<-eos
+COMPOSE_PROJECT_NAME=#{fetch(:application)}
+COMPOSE_FILE=docker-compose.yml:docker-compose.#{fetch(:stage)}.yml
+eos
+
+    on roles(:all) do |host|
+      upload_file(StringIO.new(compose_env_file), "#{current_path}/.env", mod: 'ug+rw,o+r', own: host.user)
+    end
+  end
 
 
   desc 'Build'
   task :build do
     on roles(:all) do
       within current_path do
-        sudo :'docker-compose', *docker_compose_opts, 'build'
+        execute :'docker-compose', 'build'
       end
     end
   end
@@ -143,7 +160,7 @@ eos
   task :start do
     on roles(:all) do
       within current_path do
-        sudo :'docker-compose', *docker_compose_opts, 'up', '-d'
+        execute :'docker-compose', 'up', '-d'
       end
     end
   end
@@ -153,7 +170,7 @@ eos
   task :stop do
     on roles(:all) do
       within current_path do
-        sudo :'docker-compose', *docker_compose_opts, 'down'
+        execute :'docker-compose', 'down'
       end
     end
   end
@@ -167,9 +184,11 @@ eos
   task :run_command, :command do |t, args|
     on roles(:all) do
       within current_path do
-        sudo :'docker-compose', *docker_compose_opts, 'run', 'app', 'bash', '-c', "\"#{args[:command]}\""
+        execute :'docker-compose', 'run', 'app', 'bash', '-c', "\"#{args[:command]}\""
       end
     end
+
+    Rake::Task['dockerized_app:run_command'].reenable
   end
 
 
@@ -185,9 +204,9 @@ eos
   desc 'Cleanup'
   task :cleanup do
     on roles(:all) do
-      sudo :bash, '-c', '"for CONTAINER in \$(docker ps -f status=exited -q) ; do docker rm \${CONTAINER} ; done"'
-      sudo :bash, '-c', '"for IMAGE in \$(docker images -f dangling=true -q) ; do docker rmi \${IMAGE} ; done"'
-      sudo :docker, 'network', 'prune', '-f'
+      execute :bash, '-c', '"for CONTAINER in \$(docker ps -f status=exited -q) ; do docker rm \${CONTAINER} ; done"'
+      execute :bash, '-c', '"for IMAGE in \$(docker images -f dangling=true -q) ; do docker rmi \${IMAGE} ; done"'
+      execute :docker, 'network', 'prune', '-f'
     end
   end
 
