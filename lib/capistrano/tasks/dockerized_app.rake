@@ -28,13 +28,12 @@ namespace :dockerized_app do
 
 
 
-  # Setup Tasks (one-time)
+  # Initial Setup & Uninstall Tasks
 
-  desc 'Setup'
+  desc 'Setup dockerized app'
   task setup: [:setup_init, :setup_log, :setup_cron, :setup_symlinks]
 
 
-  desc 'Setup cron'
   task :setup_cron do
     on roles(:all) do
       upload_file('config/crontab', "/etc/cron.d/#{fetch(:application)}")
@@ -46,7 +45,6 @@ namespace :dockerized_app do
   end
 
 
-  desc 'Setup init'
   task :setup_init do
     init_script = <<-eos
 #!/bin/sh
@@ -90,7 +88,6 @@ eos
   end
 
 
-  desc 'Setup log'
   task :setup_log do
     logrotate_script = <<-eos
 #{shared_path}/log/*.log {
@@ -115,10 +112,24 @@ eos
   end
 
 
-  desc 'Setup symlinks'
   task :setup_symlinks do
     on roles(:all) do
       execute :ln, '-sf', current_path, "~/#{fetch(:application)}"
+    end
+  end
+
+
+  desc 'Uninstall dockerized app'
+  task :uninstall do
+    on roles(:all) do
+      if test "[ -L #{current_path} ] && [ -d $(readlink #{current_path}) ]"
+        invoke 'dockerized_app:stop'
+        invoke 'dockerized_app:cleanup'
+      end
+
+      sudo :rm, '-f', "/etc/init.d/#{fetch(:application)}", "/etc/logrotate.d/#{fetch(:application)}", "/etc/cron.d/{#{fetch(:application)},#{fetch(:application)}-primary}"
+      execute :rm, '-f', "~/#{fetch(:application)}"
+      execute :rm, '-fr', fetch(:deploy_to)
     end
   end
 
@@ -133,7 +144,6 @@ eos
   after 'deploy:publishing', 'dockerized_app:deploy'
 
 
-  desc 'Setup Compose'
   task :setup_compose do
     compose_env_file = <<-eos
 COMPOSE_PROJECT_NAME=#{fetch(:application)}
