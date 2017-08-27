@@ -30,7 +30,7 @@ namespace :dockerized_app do
 
   # Initial Setup Tasks
 
-  task setup_initial: [:setup_init, :setup_log, :setup_cron, :setup_symlinks]
+  task setup_initial: [:setup_init, :setup_cron, :setup_logrotate, :setup_symlinks]
 
 
   task :setup_cron do
@@ -87,7 +87,7 @@ eos
   end
 
 
-  task :setup_log do
+  task :setup_logrotate do
     logrotate_script = <<-eos
 #{shared_path}/log/*.log {
   daily
@@ -102,10 +102,6 @@ eos
 eos
 
     on roles(:all) do |host|
-      sudo :mkdir, '-p', "#{shared_path}/log"
-      sudo :chown, '-R', "#{host.user}:$(id -gn #{host.user})", fetch(:deploy_to)
-      execute :chmod, '-R', 'u+rw,g+rws,o+r', fetch(:deploy_to)
-      execute :chmod, 'o+w', "#{shared_path}/log"
       upload_file(StringIO.new(logrotate_script), "/etc/logrotate.d/#{fetch(:application)}")
     end
   end
@@ -123,14 +119,14 @@ eos
   # Deploy Tasks
 
   desc 'Deploy dockerized app'
-  task deploy: [:check_setup_initial, :setup_compose, :setup_secrets, :build, :stop, :migrate, :start, :cleanup]
+  task deploy: [:check_setup_initial, :setup_compose, :setup_host_volume_mounts, :setup_secrets, :build, :stop, :migrate, :start, :cleanup]
 
   after 'deploy:publishing', 'dockerized_app:deploy'
 
 
   task :check_setup_initial do
     on roles(:all) do
-      if test "[ ! -f /etc/init.d/#{fetch(:application)} ] || [ ! -f /etc/logrotate.d/#{fetch(:application)} ]"
+      if test "[ ! -f /etc/init.d/#{fetch(:application)} ]"
         invoke 'dockerized_app:setup_initial'
       end
     end
@@ -145,6 +141,20 @@ eos
 
     on roles(:all) do |host|
       upload_file(StringIO.new(compose_env_file), "#{current_path}/.env", mod: 'ug+rw,o+r', own: host.user)
+    end
+  end
+
+
+  task :setup_host_volume_mounts do
+    # Relative to deploy_to
+    mounts = Array(fetch(:dockerized_app_host_volume_mounts, []))
+
+    on roles(:all) do
+      mounts.each do |mount|
+        mount_path = "#{fetch(:deploy_to)}/#{mount}"
+        execute :mkdir, '-p', mount_path
+        sudo :chown, fetch(:dockerized_app_user, 'app'), mount_path
+      end
     end
   end
 
@@ -206,6 +216,18 @@ eos
   end
 
 
+  desc 'Exec command'
+  task :exec_command, :command do |t, args|
+    on roles(:all) do
+      within current_path do
+        execute :'docker-compose', 'exec', 'app', 'bash', '-c', "\"#{args[:command]}\""
+      end
+    end
+
+    Rake::Task['dockerized_app:exec_command'].reenable
+  end
+
+
   desc 'Migrate'
   task :migrate do
     migrate_command = fetch(:dockerized_app_migrate_command)
@@ -237,7 +259,7 @@ eos
         invoke 'dockerized_app:cleanup'
       end
 
-      sudo :rm, '-f', "/etc/init.d/#{fetch(:application)}", "/etc/logrotate.d/#{fetch(:application)}", "/etc/cron.d/{#{fetch(:application)},#{fetch(:application)}-primary}"
+      sudo :rm, '-f', "/etc/init.d/#{fetch(:application)}", "/etc/cron.d/{#{fetch(:application)},#{fetch(:application)}-primary}", "/etc/logrotate.d/#{fetch(:application)}"
       execute :rm, '-f', "~/#{fetch(:application)}"
       execute :rm, '-fr', fetch(:deploy_to)
     end
