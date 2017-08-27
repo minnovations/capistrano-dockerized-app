@@ -147,7 +147,7 @@ eos
 
   task :setup_host_volume_mounts do
     # Relative to deploy_to
-    mounts = Array(fetch(:dockerized_app_host_volume_mounts, []))
+    mounts = Array(fetch(:dockerized_app_host_volume_mounts, 'shared/log'))
 
     on roles(:all) do
       mounts.each do |mount|
