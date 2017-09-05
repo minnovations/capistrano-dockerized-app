@@ -59,6 +59,18 @@ namespace :dockerized_app do
   end
 
 
+  desc 'Exec command on primary'
+  task :exec_command_primary, :command do |t, args|
+    on roles(:all, filter: :primary) do
+      within current_path do
+        execute :'docker-compose', 'exec', 'app', 'bash', '-c', "\"#{args[:command]}\""
+      end
+    end
+
+    Rake::Task['dockerized_app:exec_command_primary'].reenable
+  end
+
+
   desc 'Run command'
   task :run_command, :command do |t, args|
     on roles(:all) do
@@ -71,14 +83,24 @@ namespace :dockerized_app do
   end
 
 
+  desc 'Run command on primary'
+  task :run_command_primary, :command do |t, args|
+    on roles(:all, filter: :primary) do
+      within current_path do
+        execute :'docker-compose', 'run', 'app', 'bash', '-c', "\"#{args[:command]}\""
+      end
+    end
+
+    Rake::Task['dockerized_app:run_command_primary'].reenable
+  end
+
+
   #
 
   desc 'Migrate'
   task :migrate do
     migrate_command = fetch(:dockerized_app_migrate_command)
-    on roles(:all, filter: :primary) do
-      invoke 'dockerized_app:run_command', migrate_command
-    end if migrate_command
+    invoke('dockerized_app:run_command_primary', migrate_command) if migrate_command
   end
 
 end

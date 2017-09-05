@@ -6,11 +6,13 @@ namespace :dockerized_app do
 
 
   task :setup_initial_check do
+    check = []
+
     on roles(:all) do
-      if test "[ ! -f /etc/init.d/#{fetch(:application)} ]"
-        invoke 'dockerized_app:setup_initial'
-      end
+      check << false if test "[ ! -f /etc/init.d/#{fetch(:application)} ]"
     end
+
+    invoke 'dockerized_app:setup_initial' if check.count > 0
   end
 
 
